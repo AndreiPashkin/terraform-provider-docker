@@ -22,7 +22,6 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
-	"github.com/docker/go-units"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -47,7 +46,10 @@ var creationTime time.Time
 
 func resourceDockerContainerCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	var err error
-	client := meta.(*ProviderConfig).DockerClient
+	client, err := meta.(*ProviderConfig).MakeClient(ctx, d)
+	if err != nil {
+		return diag.Errorf(fmt.Sprint(err))
+	}
 	authConfigs := meta.(*ProviderConfig).AuthConfigs
 	image := d.Get("image").(string)
 	_, err = findImage(ctx, image, client, authConfigs)
@@ -567,7 +569,10 @@ func resourceDockerContainerRead(ctx context.Context, d *schema.ResourceData, me
 		containerReadRefreshTimeoutMilliseconds = containerReadRefreshTimeoutMillisecondsDefault
 	}
 	log.Printf("[INFO] Waiting for container: '%s' to run: max '%v seconds'", d.Id(), containerReadRefreshTimeoutMilliseconds/1000)
-	client := meta.(*ProviderConfig).DockerClient
+	client, err := meta.(*ProviderConfig).MakeClient(ctx, d)
+	if err != nil {
+		return diag.Errorf(fmt.Sprint(err))
+	}
 
 	apiContainer, err := fetchDockerContainer(ctx, d.Id(), client)
 	if err != nil {
@@ -762,11 +767,14 @@ func resourceDockerContainerRead(ctx context.Context, d *schema.ResourceData, me
 func resourceDockerContainerReadRefreshFunc(ctx context.Context,
 	d *schema.ResourceData, meta interface{}) resource.StateRefreshFunc {
 	return func() (interface{}, string, error) {
-		client := meta.(*ProviderConfig).DockerClient
+		client, err := meta.(*ProviderConfig).MakeClient(ctx, d)
+		if err != nil {
+			return nil, "", err
+		}
 		containerID := d.Id()
 
 		var container types.ContainerJSON
-		container, err := client.ContainerInspect(ctx, containerID)
+		container, err = client.ContainerInspect(ctx, containerID)
 		if err != nil {
 			return container, "pending", err
 		}
@@ -847,8 +855,11 @@ func resourceDockerContainerUpdate(ctx context.Context, d *schema.ResourceData, 
 				}
 				updateConfig.Resources.MemorySwap = a
 			}
-			client := meta.(*ProviderConfig).DockerClient
-			_, err := client.ContainerUpdate(ctx, d.Id(), updateConfig)
+			client, err := meta.(*ProviderConfig).MakeClient(ctx, d)
+			if err != nil {
+				return diag.Errorf(fmt.Sprint(err))
+			}
+			_, err = client.ContainerUpdate(ctx, d.Id(), updateConfig)
 			if err != nil {
 				return diag.Errorf("Unable to update a container: %v", err)
 			}
@@ -859,7 +870,10 @@ func resourceDockerContainerUpdate(ctx context.Context, d *schema.ResourceData, 
 }
 
 func resourceDockerContainerDelete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	client := meta.(*ProviderConfig).DockerClient
+	client, err := meta.(*ProviderConfig).MakeClient(ctx, d)
+	if err != nil {
+		return diag.Errorf(fmt.Sprint(err))
+	}
 
 	if !d.Get("attach").(bool) {
 		// Stop the container before removing if destroy_grace_seconds is defined
